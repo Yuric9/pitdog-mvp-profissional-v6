@@ -67,7 +67,7 @@ app.post<{Body:CreateOrderBody}>('/pedidos', async (req, reply) => {
         const adP=db.prepare(`SELECT p.id,p.preco,p.nome,p.ativo FROM produtos p JOIN categorias c ON c.id=p.categoria_id WHERE p.id=? AND c.nome='Adicionais'`).get(ad.id) as {id:number;preco:number;nome:string;ativo:number}|undefined;
         if(!adP) bad(`Adicional ${ad.id} não encontrado`);
         if(!adP.ativo) bad(`Adicional ${adP.nome} está inativo`);
-        db.prepare('INSERT INTO itens_adicionais (item_pedido_id,produto_adicional_id,qtd,preco) VALUES (?,?,?,?)').run(Number(item.lastInsertRowId),adP.id,ad.qtd,adP.preco);
+        db.prepare('INSERT INTO itens_adicionais (item_pedido_id,produto_adicional_id,qtd,preco) VALUES (?,?,?,?)').run(Number(item.lastInsertRowid),adP.id,ad.qtd,adP.preco);
         total+=adP.preco*ad.qtd;
       }
     }
