@@ -40,7 +40,7 @@ function selectMesa(id){mesa=mesas.find(m=>m.id===id);document.querySelector('#m
 function add(id){const p=products.find(x=>x.id===id);if(!p)return;let x=cart.find(i=>i.produto_id===id);if(x)x.quantidade++;else cart.push({produto_id:id,nome:p.nome,preco:Number(p.preco),quantidade:1});renderCart()}
 function renderCart(){document.querySelector('#cart').innerHTML=cart.length?cart.map((i,n)=>'<div class="cart-row"><span>'+i.nome+' × '+i.quantidade+'</span><b>R$ '+money(i.preco*i.quantidade)+'</b></div>').join(''):'<p class="muted">Nenhum item.</p>';document.querySelector('#total').textContent=money(cart.reduce((s,i)=>s+i.preco*i.quantidade,0))}
 function clearCart(){cart=[];renderCart()}
-async function sendOrder(){if(!mesa){alert('Selecione uma mesa.');return}if(!cart.length){alert('Adicione produtos.');return}try{await api('/pedidos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mesa_id:mesa.id,itens:cart.map(i=>({produto_id:i.produto_id,quantidade:i.quantidade}))})});document.querySelector('#msg').textContent='Pedido enviado para a cozinha.';clearCart()}catch(e){document.querySelector('#msg').textContent='Erro: '+e.message}}
+async function sendOrder(){if(!mesa){alert('Selecione uma mesa.');return}if(!cart.length){alert('Adicione produtos.');return}try{await api('/pedidos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mesa_id:mesa.id,itens:cart.map(i=>({produto_id:i.produto_id,qtd:i.quantidade}))})});document.querySelector('#msg').textContent='Pedido enviado para a cozinha.';clearCart()}catch(e){document.querySelector('#msg').textContent='Erro: '+e.message}}
 load();renderCart();
 </script>
 </body></html>
