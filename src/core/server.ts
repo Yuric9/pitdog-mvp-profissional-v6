@@ -67,7 +67,7 @@ app.post<{Body:CreateOrderBody}>('/pedidos', async (req, reply) => {
         const adP=db.prepare(`SELECT p.id,p.preco,p.nome,p.ativo FROM produtos p JOIN categorias c ON c.id=p.categoria_id WHERE p.id=? AND c.nome='Adicionais'`).get(ad.id) as {id:number;preco:number;nome:string;ativo:number}|undefined;
         if(!adP) bad(`Adicional ${ad.id} não encontrado`);
         if(!adP.ativo) bad(`Adicional ${adP.nome} está inativo`);
-        db.prepare('INSERT INTO itens_adicionais (item_pedido_id,produto_adicional_id,qtd,preco) VALUES (?,?,?,?)').run(Number(item.lastInsertRowid),adP.id,ad.qtd,adP.preco);
+        db.prepare('INSERT INTO itens_adicionais (item_pedido_id,produto_adicional_id,qtd,preco) VALUES (?,?,?,?)').run(Number(item.lastInsertRowId),adP.id,ad.qtd,adP.preco);
         total+=adP.preco*ad.qtd;
       }
     }
@@ -79,19 +79,30 @@ app.post<{Body:CreateOrderBody}>('/pedidos', async (req, reply) => {
   catch(error){return reply.code((error as {statusCode?:number}).statusCode??400).send({error:(error as Error).message})}
 });
 
-app.get('/kds/pendentes',async()=>db.prepare(`SELECT p.id AS pedido_id,p.criado_em,p.total,m.numero AS mesa_numero,prod.nome AS produto_nome,ip.qtd,ip.observacao,ip.id AS item_id,ip.status_cozinha FROM pedidos p JOIN mesas m ON m.id=p.mesa_id JOIN itens_pedido ip ON ip.pedido_id=p.id JOIN produtos prod ON prod.id=ip.produto_id WHERE p.status='NA_COZINHA' AND ip.status_cozinha!='PRONTO' ORDER BY p.criado_em,ip.id`).all());
+app.get('/kds/pendentes',async()=>db.prepare(`SELECT p.id AS pedido_id,p.criado_em,p.total,m.numero AS mesa_numero,prod.nome AS produto_nome,ip.qtd,ip.observacao,ip.id AS item_id,ip.status_cozinha FROM pedidos p JOIN mesas m ON m.id=p.mesa_id JOIN itens_pedido ip ON ip.pedido_id=p.id JOIN produtos prod ON prod.id=ip.produto_id WHERE p.status='NA_COZINHA' AND ip.status_cozinha NOT IN ('PRONTO','CANCELADO') ORDER BY p.criado_em,ip.id`).all());
 
 app.post<{Params:{id:string};Body:{status:string}}>('/kds/item/:id/status',async(req,reply)=>{
   const allowed=new Set(['PENDENTE','EM_PREPARO','PRONTO','CANCELADO']);
-  if(!allowed.has(req.body?.status)) return reply.code(400).send({error:'Status de cozinha inválido'});
+  const novoStatus=req.body?.status;
+  if(!allowed.has(novoStatus)) return reply.code(400).send({error:'Status de cozinha inválido'});
   const itemId=Number(req.params.id);
-  const item=db.prepare('SELECT pedido_id FROM itens_pedido WHERE id=?').get(itemId) as {pedido_id:number}|undefined;
+  const item=db.prepare('SELECT pedido_id,qtd,preco_unit,status_cozinha FROM itens_pedido WHERE id=?').get(itemId) as {pedido_id:number;qtd:number;preco_unit:number;status_cozinha:string}|undefined;
   if(!item) return reply.code(404).send({error:'Item não encontrado'});
-  const result=db.prepare('UPDATE itens_pedido SET status_cozinha=? WHERE id=?').run(req.body.status,itemId);
+  const foiCanceladoAgora=novoStatus==='CANCELADO'&&item.status_cozinha!=='CANCELADO';
+  const aplicarCancelamento=db.transaction(()=>{
+    const result=db.prepare('UPDATE itens_pedido SET status_cozinha=? WHERE id=?').run(novoStatus,itemId);
+    if(foiCanceladoAgora){
+      const adicionais=db.prepare('SELECT COALESCE(SUM(qtd*preco),0) AS total FROM itens_adicionais WHERE item_pedido_id=?').get(itemId) as {total:number};
+      const valorItem=item.preco_unit*item.qtd+Number(adicionais.total);
+      db.prepare('UPDATE pedidos SET total=MAX(0,total-?) WHERE id=?').run(valorItem,item.pedido_id);
+    }
+    return result;
+  });
+  const result=aplicarCancelamento();
   if(!result.changes) return reply.code(404).send({error:'Item não encontrado'});
   const pendentes=db.prepare("SELECT COUNT(*) AS total FROM itens_pedido WHERE pedido_id=? AND status_cozinha!='PRONTO' AND status_cozinha!='CANCELADO'").get(item.pedido_id) as {total:number};
   if(Number(pendentes.total)===0){db.prepare("UPDATE pedidos SET status='PRONTO' WHERE id=? AND status!='FECHADO'").run(item.pedido_id);app.io.emit('pedido:pronto',{pedidoId:item.pedido_id})}
-  app.io.emit('kds:atualizado',{id:itemId,pedidoId:item.pedido_id,status:req.body.status});
+  app.io.emit('kds:atualizado',{id:itemId,pedidoId:item.pedido_id,status:novoStatus});
   return {ok:true,pedido_pronto:Number(pendentes.total)===0};
 });
 
@@ -129,8 +140,8 @@ app.post<{Params:{id:string};Body:CloseOrderBody}>('/pedidos/:id/fechar',async(r
     const ped=db.prepare('SELECT * FROM pedidos WHERE id=?').get(pedidoId) as {id:number;mesa_id:number|null;total:number;status:string}|undefined;
     if(!ped)bad('Pedido não encontrado');if(ped.status==='FECHADO')bad('Pedido já está fechado');if(forma==='DINHEIRO'&&valor_pago<ped.total)bad('Valor pago insuficiente');
     const caixa=db.prepare("SELECT * FROM caixas WHERE status='ABERTO' ORDER BY id DESC LIMIT 1").get() as {id:number}|undefined;if(!caixa)bad('Nenhum caixa aberto. Abra o caixa antes de receber pagamentos.');
-    const itens=db.prepare('SELECT ip.produto_id,ip.qtd,p.nome,p.controla_estoque FROM itens_pedido ip JOIN produtos p ON p.id=ip.produto_id WHERE ip.pedido_id=?').all(pedidoId) as Array<{produto_id:number;qtd:number;nome:string;controla_estoque:number}>;
-    const adicionais=db.prepare('SELECT ia.produto_adicional_id AS produto_id,ia.qtd,p.nome,p.controla_estoque FROM itens_adicionais ia JOIN itens_pedido ip ON ip.id=ia.item_pedido_id JOIN produtos p ON p.id=ia.produto_adicional_id WHERE ip.pedido_id=?').all(pedidoId) as Array<{produto_id:number;qtd:number;nome:string;controla_estoque:number}>;
+    const itens=db.prepare(`SELECT ip.produto_id,ip.qtd,p.nome,p.controla_estoque FROM itens_pedido ip JOIN produtos p ON p.id=ip.produto_id WHERE ip.pedido_id=? AND ip.status_cozinha!='CANCELADO'`).all(pedidoId) as Array<{produto_id:number;qtd:number;nome:string;controla_estoque:number}>;
+    const adicionais=db.prepare(`SELECT ia.produto_adicional_id AS produto_id,ia.qtd,p.nome,p.controla_estoque FROM itens_adicionais ia JOIN itens_pedido ip ON ip.id=ia.item_pedido_id JOIN produtos p ON p.id=ia.produto_adicional_id WHERE ip.pedido_id=? AND ip.status_cozinha!='CANCELADO'`).all(pedidoId) as Array<{produto_id:number;qtd:number;nome:string;controla_estoque:number}>;
     const consumo=new Map<number,{nome:string;qtd:number;controla_estoque:number}>();
     for(const item of [...itens,...adicionais]){if(!item.controla_estoque)continue;const atual=consumo.get(item.produto_id);consumo.set(item.produto_id,{nome:item.nome,qtd:(atual?.qtd??0)+item.qtd,controla_estoque:1})}
     for(const [produtoId,item] of consumo){if(estoqueAtual(produtoId)<item.qtd)bad(`Estoque insuficiente para ${item.nome}. Disponível: ${estoqueAtual(produtoId)}`)}
@@ -182,5 +193,6 @@ app.post<{Body:{saldo_conferido?:number}}>('/caixa/fechar',async(req,reply)=>{
   db.prepare("UPDATE caixas SET status='FECHADO',fechado_em=CURRENT_TIMESTAMP,saldo_final=? WHERE id=?").run(saldoFinal,caixa.id);
   return {ok:true,saldo_final:saldoFinal,saldo_conferido:saldoConferido??null,diferenca,vendas:vendas.total,vendas_dinheiro:vendasDinheiro.total,suprimentos:suprimentos.total,sangrias:sangrias.total};
 });
+
 app.setErrorHandler((error,_req,reply)=>{app.log.error(error);return reply.code(error.statusCode??500).send({error:error.message||'Erro interno'})});
 const port=Number(process.env.PORT??3333);await app.listen({port,host:'0.0.0.0'});console.log(`PitDog em http://localhost:${port}`);
