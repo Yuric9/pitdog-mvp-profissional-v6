@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PitDog — PDV</title>
+<link rel="stylesheet" href="/theme.css">
+<style>
+body{margin:0;background:#f4f6f8;color:#17212b;font-family:Inter,system-ui,sans-serif}
+.app{max-width:1400px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}
+h1{margin:0}.muted{color:#66727e}.grid{display:grid;grid-template-columns:240px 1fr 340px;gap:16px}.panel{background:#fff;border:1px solid #d7dde3;border-radius:8px;padding:16px;box-shadow:0 1px 2px #0000000b}
+button{border:0;border-radius:8px;padding:10px 14px;cursor:pointer;font-weight:600}.btn{background:#1f4b72;color:white}.btn2{background:#eef2f5;color:#173a59}
+.list button{display:block;width:100%;text-align:left;margin:6px 0}.products{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}.product{padding:14px;border:1px solid #d7dde3;border-radius:8px;background:#fff;text-align:left}.product strong{display:block;margin-bottom:6px}.price{color:#1f4b72;font-weight:700}.cart-row{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid #e6e9ec}.total{font-size:22px;font-weight:800;margin:16px 0}.actions{display:flex;gap:8px;flex-wrap:wrap}.status{padding:8px 10px;border-radius:999px;background:#eef2f5;display:inline-block}
+@media(max-width:1050px){.grid{grid-template-columns:1fr}.products{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
+</style>
+</head>
+<body>
+<div class="app">
+<header class="top"><div><h1>PitDog</h1><div class="muted">PDV • pedidos • operação</div></div>
+<div class="actions"><a href="/caixa.html"><button class="btn2">Caixa</button></a><a href="/estoque.html"><button class="btn2">Estoque</button></a><span id="health" class="status">Conectando...</span></div></header>
+<div class="grid">
+<section class="panel"><h3>Mesas</h3><div id="mesas" class="list"></div></section>
+<section class="panel"><h3 id="catTitle">Produtos</h3><div id="cats" class="actions"></div><hr><div id="products" class="products"></div></section>
+<aside class="panel"><h3>Pedido <span id="mesaLabel"></span></h3><div id="cart"></div><div class="total">R$ <span id="total">0,00</span></div><div class="actions"><button class="btn" onclick="sendOrder()">Enviar para cozinha</button><button class="btn2" onclick="clearCart()">Limpar</button></div><p id="msg" class="muted"></p></aside>
+</div>
+</div>
+<script>
+let mesas=[],products=[],cats=[],mesa=null,cart=[];
+const money=n=>Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2});
+async function api(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(await r.text());return r.json()}
+async function load(){try{
+ document.querySelector('#health').textContent=(await api('/health')).status==='ok'?'Online':'Indisponível';
+ mesas=await api('/mesas'); products=await api('/produtos'); cats=await api('/categorias'); renderMesas(); renderCats(); renderProducts();
+}catch(e){document.querySelector('#health').textContent='Erro';document.querySelector('#msg').textContent=e.message}}
+function renderMesas(){document.querySelector('#mesas').innerHTML=mesas.map(m=>'<button class="btn2" onclick="selectMesa('+m.id+')">'+(m.nome||m.numero||('Mesa '+m.id))+'</button>').join('')}
+function renderCats(){document.querySelector('#cats').innerHTML='<button class="btn2" onclick="filterCat()">Todos</button>'+cats.map(c=>'<button class="btn2" onclick="filterCat('+c.id+')">'+c.nome+'</button>').join('')}
+function filterCat(id){renderProducts(id)}
+function renderProducts(cat){let ps=cat?products.filter(p=>p.categoria_id===cat):products;document.querySelector('#products').innerHTML=ps.map(p=>'<button class="product" onclick="add('+p.id+')"><strong>'+p.nome+'</strong><span class="price">R$ '+money(p.preco)+'</span></button>').join('')}
+function selectMesa(id){mesa=mesas.find(m=>m.id===id);document.querySelector('#mesaLabel').textContent='— '+(mesa?.nome||mesa?.numero||id)}
+function add(id){const p=products.find(x=>x.id===id);if(!p)return;let x=cart.find(i=>i.produto_id===id);if(x)x.quantidade++;else cart.push({produto_id:id,nome:p.nome,preco:Number(p.preco),quantidade:1});renderCart()}
+function renderCart(){document.querySelector('#cart').innerHTML=cart.length?cart.map((i,n)=>'<div class="cart-row"><span>'+i.nome+' × '+i.quantidade+'</span><b>R$ '+money(i.preco*i.quantidade)+'</b></div>').join(''):'<p class="muted">Nenhum item.</p>';document.querySelector('#total').textContent=money(cart.reduce((s,i)=>s+i.preco*i.quantidade,0))}
+function clearCart(){cart=[];renderCart()}
+async function sendOrder(){if(!mesa){alert('Selecione uma mesa.');return}if(!cart.length){alert('Adicione produtos.');return}try{await api('/pedidos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mesa_id:mesa.id,itens:cart.map(i=>({produto_id:i.produto_id,quantidade:i.quantidade}))})});document.querySelector('#msg').textContent='Pedido enviado para a cozinha.';clearCart()}catch(e){document.querySelector('#msg').textContent='Erro: '+e.message}}
+load();renderCart();
+</script>
+</body></html>
